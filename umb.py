@@ -17,6 +17,9 @@ plt.ion()
 global debug
 debug = False
 
+global testing
+testing = True
+
 def print_hbonds(b, inter, r1, r2):
     if debug:
         print b
@@ -66,14 +69,40 @@ class UmbEnsemble:
         self.r1trace = r1trace
         self.r2trace = r2trace
         self.r2extra = r2extra
+        self.attached = self.analyze_protons()
+    def analyze_protons(self):
+        #r2extra is list of lists:
+        #   [dist(H1 - OH1), dist(H1 - OH2), dist(H1-watOH2), dist(H2 - OH1), dist(H2 - OH2), dist(H2-watOH2)]
+        prot_kcx = []
+        r_cov = 1.31
+        for h11, h12, h1w, h21, h22, h2w in self.r2extra:
+            s = []
+            attached = False
+            if h11 <= r_cov:
+                attached = True
+                s.append('(H1-OH1)')
+            elif h12 <= r_cov:
+                attached = True
+                s.append('(H1-OH2)')
+            elif h21 <= r_cov:
+                attached = True
+                s.append('(H2-OH1)')
+            elif h22 <= r_cov:
+                attached = True
+                s.append('(H2-OH2)')
+            toappend = [attached] + [x for x in s]
+            prot_kcx.append(toappend)
+         self.attached = prot_kcx
+         return prot_kcx
     def analyze_hbonds(self):
         if self.is_dori:
             selestr = "(atom A 81 CAJ) or (atom A 81 OG) or (atom W 277 OH2) or (atom W 277 H1) or " + \
                       "(atom W 277 H2) or (atom A 81 OAI) or (atom A 81 HOI) or (atom A 84 OH1) or " + \
                       "(atom A 84 OH2) or (atom A 81 OAD)"
             examinestr = "(atom A 81 OAI) or (atom A 81 OAD) or (atom A 84 OH1) or (atom A 84 OH1) " + \
-                         "or (atom A 84 OH2) or (atom W 277 OH2)"
-            new_donors = ['OAI', 'NAO', 'NAC']
+                         "or (atom A 84 OH2) or (atom W 277 OH2) or (atom A 81 OG)"
+            #OG is already a donor and acceptor
+            new_donors = ['OAI', 'NAO', 'NAC', 'OH1', 'OH2'] 
             new_acceptors = ['OAD', 'OAI', 'OAH', 'OAE', 'OH2', 'OH1']
             OAIacceptor = self.moltype + '81:OAI'
             OAIdonor = self.moltype + '81:HOI'
@@ -83,8 +112,8 @@ class UmbEnsemble:
                       "(atom W 277 H2) or (atom A 81 O62) or (atom A 81 HO6) or (atom A 84 OH1) or " + \
                       "(atom A 84 OH2) or (atom A 81 O7)"
             examinestr = "(atom A 81 O62) or (atom A 81 O7) or (atom A 84 OH1) or (atom A 84 OH1) " + \
-                         "or (atom A 84 OH2) or (atom W 277 OH2)"
-            new_donors = ['O62', 'N24', 'N26']
+                         "or (atom A 84 OH2) or (atom W 277 OH2) or (atom A 81 OG)"
+            new_donors = ['O62', 'N24', 'N26', 'OH1', 'OH2']
             new_acceptors = ['O7', 'O62', 'O31', 'O32', 'OH2', 'OH1']
             OAIacceptor = self.moltype + '81:O62'
             OAIdonor = self.moltype + '81:HO6'
@@ -94,18 +123,16 @@ class UmbEnsemble:
         WATacceptor = 'OH2277:OH2'
         WATdonor1 = 'OH2277:H1'
         WATdonor2 = 'OH2277:H2'
+        OGacceptor = self.moltype + '81:OG'
+        #WATdonors can be on KCX or OG, not guaranteed to be on water. 
+        
         #################################
         #GET HYDROGEN BONDING INFORMATION
-        #
-        # Note: This works for now, but once a proton is placed on KCX,
-        # this will not count the proton as part of KCX
-        # therefore, any interactions that group has will be uncounted
-        # this might be fixed by tracing the water as well...
         #################################
         hana = hydbond.HydrogenBondAnalysis(self.universe, selection1=examinestr,
-                                            selection2='protein',
+                                            selection2='all',
                                             donors=new_donors,
-                                            acceptors=new_acceptors)
+                                            acceptors=new_acceptors, angle=150.0)
         hana.run()
         h_bond_results = hana.timeseries
         r1lower = int((self.r1 - 2)*100)
@@ -127,7 +154,7 @@ class UmbEnsemble:
 
         frame_num = 0
         #Fill dictionaries; 0 if bond is not present; 1 if it is
-        for r1, r2, frame in zip(self.r1trace, self.r2trace, h_bond_results):
+        for prot_kcx, r1, r2, frame in zip(self.attached, self.r1trace, self.r2trace, h_bond_results):
             r1 = int(round(r1, 2)*100)
             r2 = int(round(r2, 2)*100)
             total[(r1,r2)] += 1
@@ -313,11 +340,11 @@ for i in range(4):
 
 logregex1 = '(-?[0-9]\.[0-9]+) (-?[0-9]\.[0-9]+)'
 logregex2 = '(?<=#)(/[-[0-9\.\w]+)+'
-if debug:
-    psfpath, rootpath, isdori, moltype, time, pfile = infolist[0]
+if debug or testing:
+    psfpath, rootpath, isdori, moltype, time, pfile = infolist[1]
     keylist = [[] for x in range(5)]
     matrix = []
-    for y in range(-50, -5):
+    for y in range(-35, -5):
         for x in range(-30, 40):
             matrix.append((x,y))
 
