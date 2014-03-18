@@ -18,7 +18,7 @@ global debug
 debug = False
 
 global testing
-testing = True
+testing = False
 
 def print_hbonds(b, inter, r1, r2):
     if debug:
@@ -37,10 +37,11 @@ def print_hbonds(b, inter, r1, r2):
 #   Tautomerization
 
 def incr_dict(dictionary, key):
-    if key in dictionary:
-        dictionary[key] += 1
-    else:
-        dictionary[key] = 1
+    dictionary[key] = 1
+##    if key in dictionary:
+##        dictionary[key] += 1
+##    else:
+##        dictionary[key] = 1
 
 def block_incr_dict(amount, d, k):
     if k in d:
@@ -69,31 +70,44 @@ class UmbEnsemble:
         self.r1trace = r1trace
         self.r2trace = r2trace
         self.r2extra = r2extra
-        self.attached = self.analyze_protons()
+        self.kcx_attached, self.og_attached = self.analyze_protons()
     def analyze_protons(self):
         #r2extra is list of lists:
-        #   [dist(H1 - OH1), dist(H1 - OH2), dist(H1-watOH2), dist(H2 - OH1), dist(H2 - OH2), dist(H2-watOH2)]
+        #   [dist(H1 - OH1), dist(H1 - OH2), dist(H1-watOH2),
+        #    dist(H2 - OH1), dist(H2 - OH2), dist(H2-watOH2),
+        #    dist(H1-OG), dist(H2-OG)]
         prot_kcx = []
+        prot_og = []
         r_cov = 1.31
-        for h11, h12, h1w, h21, h22, h2w in self.r2extra:
-            s = []
-            attached = False
+        for h11, h12, h1w, h21, h22, h2w, h1o, h2o in self.r2extra:
+            kcx = []
+            kcx_attached = False
+            og = []
+            og_attached = False
             if h11 <= r_cov:
-                attached = True
-                s.append('(H1-OH1)')
-            elif h12 <= r_cov:
-                attached = True
-                s.append('(H1-OH2)')
-            elif h21 <= r_cov:
-                attached = True
-                s.append('(H2-OH1)')
-            elif h22 <= r_cov:
-                attached = True
-                s.append('(H2-OH2)')
-            toappend = [attached] + [x for x in s]
+                kcx_attached = True
+                kcx.append('(H1-OH1)')
+            if h12 <= r_cov:
+                kcx_attached = True
+                kcx.append('(H1-OH2)')
+            if h21 <= r_cov:
+                kcx_attached = True
+                kcx.append('(H2-OH1)')
+            if h22 <= r_cov:
+                kcx_attached = True
+                kcx.append('(H2-OH2)')
+            if h1o <= r_cov:
+                og_attached = True
+                og.append('(H1-OG)')
+            if h2o <= r_cov:
+                og_attached = True
+                og.append('(H2-OG)')
+            toappend = [kcx_attached] + [x for x in kcx]
             prot_kcx.append(toappend)
-         self.attached = prot_kcx
-         return prot_kcx
+            toappend = [og_attached] + [x for x in og]
+            prot_og.append(toappend)
+        foo = [prot_kcx, prot_og]
+        return foo
     def analyze_hbonds(self):
         if self.is_dori:
             selestr = "(atom A 81 CAJ) or (atom A 81 OG) or (atom W 277 OH2) or (atom W 277 H1) or " + \
@@ -145,20 +159,28 @@ class UmbEnsemble:
             for x in range(r1lower, r1higher):
                 matrix.append((x,y))
 
-        total = {key:0 for key in matrix}
+        total = {key:[0, 0, 0] for key in matrix}
         OAIhbonds = {key:{} for key in matrix}
         OADhbonds = {key:{} for key in matrix}
-        KCX1hbonds = {key:{} for key in matrix}
-        KCX2hbonds = {key:{} for key in matrix}
+        KCXhbonds = {key:{} for key in matrix}
         WAThbonds = {key:{} for key in matrix}
+        OGhbonds = {key:{} for key in matrix}
 
-        frame_num = 0
+        r_cov = 1.31
         #Fill dictionaries; 0 if bond is not present; 1 if it is
-        for prot_kcx, r1, r2, frame in zip(self.attached, self.r1trace, self.r2trace, h_bond_results):
+        for tstep, foo in enumerate(zip(self.kcx_attached, self.og_attached, self.r1trace, self.r2trace, h_bond_results)):
+            prot_kcx, prot_og, r1, r2, frame = foo
             r1 = int(round(r1, 2)*100)
             r2 = int(round(r2, 2)*100)
-            total[(r1,r2)] += 1
-            frame_num += 1
+            total[(r1,r2)][0] += 1
+            if prot_kcx[0]:
+                total[(r1,r2)][1] += 1
+            if prot_og[0]:
+                total[(r1,r2)][2] += 1
+            #r2extra is list of lists:
+            #   [dist(H1 - OH1), dist(H1 - OH2), dist(H1-watOH2),
+            #    dist(H2 - OH1), dist(H2 - OH2), dist(H2-watOH2),
+            #    dist(H1-OG), dist(H2-OG)]
             for hbond in frame:
                 m = re.search(regex, hbond[2])
                 donorstr = m.group(0)
@@ -168,10 +190,32 @@ class UmbEnsemble:
                 if hbond[2] == OAIdonor:
                     print_hbonds(hbond, "OAIdonor", r1/100., r2/100.)
                     incr_dict(OAIhbonds[(r1,r2)], acceptorstr)
-                if (hbond[2] == WATdonor1) or (hbond[2] == WATdonor2):
-                    print_hbonds(hbond, "Watdonor", r1/100., r2/100.)
-                    incr_dict(WAThbonds[(r1,r2)], acceptorstr)
-                    
+                if hbond[2] == WATdonor1:
+                    if self.r2extra[tstep][0] <= r_cov or self.r2extra[tstep][1] <= r_cov:
+                        print_hbonds(hbond, "KCXdonor", r1/100., r2/100.)
+                        incr_dict(KCXhbonds[(r1,r2)], acceptorstr)
+                    if self.r2extra[tstep][2] <= r_cov:
+                        print_hbonds(hbond, "WATdonor", r1/100., r2/100.)
+                        incr_dict(WAThbonds[(r1,r2)], acceptorstr)
+                    if self.r2extra[tstep][6] <= r_cov:
+                        print_hbonds(hbond, "OGdonor", r1/100., r2/100.)
+                        incr_dict(OGhbonds[(r1,r2)], acceptorstr)
+                    #Should not ever not be in the case where it's flying in the ether, since it wouldn't be
+                    #counted by the hbonds.py algorithm
+                        
+                if hbond[2] == WATdonor2:
+                    if self.r2extra[tstep][3] <= r_cov or self.r2extra[tstep][4] <= r_cov:
+                        print_hbonds(hbond, "KCXdonor", r1/100., r2/100.)
+                        incr_dict(KCXhbonds[(r1,r2)], acceptorstr)
+                    if self.r2extra[tstep][5] <= r_cov:
+                        print_hbonds(hbond, "WATdonor", r1/100., r2/100.)
+                        incr_dict(WAThbonds[(r1,r2)], acceptorstr)
+                    if self.r2extra[tstep][7] <= r_cov:
+                        print_hbonds(hbond, "OGdonor", r1/100., r2/100.)
+                        incr_dict(OGhbonds[(r1,r2)], acceptorstr)
+                    #Should not ever not be in the case where it's flying in the ether, since it wouldn't be
+                    #counted by the hbonds.py algorithm
+                        
                 #Go through acceptors and add donor to correct dictionary
                 if hbond[3] == OAIacceptor:
                     print_hbonds(hbond, "OAIacceptor", r1/100., r2/100.)
@@ -179,16 +223,16 @@ class UmbEnsemble:
                 if hbond[3] == OADacceptor:
                     print_hbonds(hbond, "OADacceptor", r1/100., r2/100.)
                     incr_dict(OADhbonds[(r1,r2)], donorstr)
-                if hbond[3] == KCX1acceptor:
-                    print_hbonds(hbond, "KCX1acceptor", r1/100., r2/100.)
-                    incr_dict(KCX1hbonds[(r1,r2)], donorstr)
-                if hbond[3] == KCX2acceptor:
-                    print_hbonds(hbond, "KCX2acceptor", r1/100., r2/100.)
-                    incr_dict(KCX2hbonds[(r1,r2)], donorstr)
+                if (hbond[3] == KCX1acceptor) or (hbond[3] == KCX2acceptor):
+                    print_hbonds(hbond, "KCXacceptor", r1/100., r2/100.)
+                    incr_dict(KCXhbonds[(r1,r2)], donorstr)
                 if hbond[3] == WATacceptor:
-                    print_hbonds(hbond, "Watacceptor", r1/100., r2/100.)
-                    incr_dict(WAThbonds[(r1,r2)], donorstr)       
-        return total, OAIhbonds, OADhbonds, KCX1hbonds, KCX2hbonds, WAThbonds
+                    print_hbonds(hbond, "WATacceptor", r1/100., r2/100.)
+                    incr_dict(WAThbonds[(r1,r2)], donorstr)
+                if hbond[3] == OGacceptor:
+                    print_hbonds(hbond, "OGacceptor", r1/100., r2/100.)
+                    incr_dict(OGhbonds[(r1,r2)], donorstr)
+        return total, OAIhbonds, OADhbonds, KCXhbonds, WAThbonds, OGhbonds
     
     def plot(self):
         plt.figure()
@@ -233,7 +277,7 @@ def analyze_umbsamp(dcd_filepath, psf_filepath, is_dori, moltype, r1, r2):
     r2trace = []
     r2extra = []
     #r2 is list of lists:
-    #   [dist(H1 - OH1), dist(H1 - OH2), dist(H1-watOH2), dist(H2 - OH1), dist(H2 - OH2), dist(H2-watOH2)]
+    #   [dist(H1 - OH1), dist(H1 - OH2), dist(H1-watOH2), dist(H2 - OH1), dist(H2 - OH2), dist(H2-watOH2), dist(H1-OG), dist(H2-OG)]
     rxnatoms = universe.trajectory.timeseries(aoi)
     for t in range(rxnatoms.shape[1]):
         m = get_dist(rxnatoms[4][t], rxnatoms[1][t])
@@ -245,15 +289,20 @@ def analyze_umbsamp(dcd_filepath, psf_filepath, is_dori, moltype, r1, r2):
         h4 = get_dist(rxnatoms[6][t], rxnatoms[2][t])
         h5 = get_dist(rxnatoms[6][t], rxnatoms[3][t])
         h6 = get_dist(rxnatoms[6][t], rxnatoms[4][t])
+        h7 = get_dist(rxnatoms[5][t], rxnatoms[0][t])
+        h8 = get_dist(rxnatoms[6][t], rxnatoms[0][t])
         if is_dori:
             r2trace.append(-h2)
         else:
             r2trace.append(-h1)
-        r2extra.append([h1, h2, h3, h4, h5, h6])
+        r2extra.append([h1, h2, h3, h4, h5, h6, h7, h8])
     ensemble = UmbEnsemble(universe, is_dori, moltype, dcd_filepath, r1, r2, r1trace, r2trace, r2extra)
     return ensemble
 
 def add_to_list(listtoaddto, keylist, rpoint, cumul_hbonds, total, i):
+    '''Iterates through keylist, so keylist needs to be ordered before calling add_to_list'''
+    z = 1.96
+    zsq = 3.84
     mini_list = [rpoint[0]/10., rpoint[1]/10.]
     
     for key in keylist:
@@ -264,12 +313,21 @@ def add_to_list(listtoaddto, keylist, rpoint, cumul_hbonds, total, i):
                 prob = cumul_hbonds[rpoint][i][key]/total
         else:
             prob = 0
+        #mini_list = [probability, wilson score upper, wilson score lower]
         mini_list.append(prob)
-        #TODO: check that this is correct variance
-        mini_list.append(prob*(1-prob))
+        #mini_list.append(z*math.sqrt(prob*(1-prob)/total)) # Normal approx interval. Not good when prob near 0 or 1
+        if total != 0:
+            wscorepm = z*math.sqrt(prob*(1-prob)/total + zsq/(4*total**2))
+            wmult = 1/(1+zsq/total)
+            mini_list.append(wmult*(prob + zsq/(2*total) + wscorepm))
+            mini_list.append(wmult*(prob + zsq/(2*total) - wscorepm))
+        else:
+            mini_list.append(0)
+            mini_list.append(0)
+        
     listtoaddto.append(mini_list)
 
-def plot_2Dhist (sorted_list, key_list, figname, size):
+def plot_2Dhist_allkeys (sorted_list, key_list, figname, size):
     """ intoTS and outofTS are TS basin definitions. Should be real numbers
         figname should be string to write figure name to. Should include .png"""
     annoying = zip(*(sorted_list))
@@ -292,9 +350,10 @@ def plot_2Dhist (sorted_list, key_list, figname, size):
     r2test = np.array(l_of_np_r2)
 
     for i,key in enumerate(key_list):
-        avg, err = annoying[0], annoying[1]
-        if len(annoying) > 2:
-            annoying = annoying[2:]
+        avg, err2upp, err2low = annoying[0], annoying[1], annoying[2]
+        if len(annoying) > 3:
+            annoying = annoying[3:]
+        
         new_avg = [[] for i in range(len(avg)/size)]
         l = []
         for j,x in enumerate(avg):
@@ -304,13 +363,51 @@ def plot_2Dhist (sorted_list, key_list, figname, size):
         
         avgtest = np.array(l)
         plt.figure()
-        plt.pcolor(r1test, r2test, avgtest, cmap='jet', vmin=0, vmax=2)
+        plt.pcolor(r1test, r2test, avgtest, cmap='jet', vmin=0, vmax=1)
         plt.xlabel('R1')
         plt.ylabel('R2')
         plt.title(figname + " : " + key)
         plt.colorbar()
         #plt.draw()
         plt.savefig(figname + " : " + key)
+        plt.close('all')
+
+        uperrmax = max(err2upp)
+        uperrmin = min(err2upp)
+        upper_error = [[] for i in range(len(err2upp)/size)]
+        l = []
+        for j,x in enumerate(err2upp):
+            upper_error[j/size].append(x)
+        for foo in upper_error:
+            l.append(np.array(foo))
+        upper_error = np.array(l)
+        plt.figure()
+        plt.pcolor(r1test, r2test, upper_error, cmap='jet', vmin=min([0,uperrmin]), vmax=max([1,uperrmax]))
+        plt.xlabel('R1')
+        plt.ylabel('R2')
+        plt.title("UpperError: " + figname + " : " + key)
+        plt.colorbar()
+        #plt.draw()
+        plt.savefig("UpperError: " + figname + " : " + key)
+        plt.close('all')
+
+        lowerrmax = max(err2low)
+        lowerrmin = min(err2low)
+        lower_error = [[] for i in range(len(err2low)/size)]
+        l = []
+        for j,x in enumerate(err2low):
+            lower_error[j/size].append(x)
+        for foo in lower_error:
+            l.append(np.array(foo))
+        lower_error = np.array(l)
+        plt.figure()
+        plt.pcolor(r1test, r2test, lower_error, cmap='jet', vmin=min([0,lowerrmin]), vmax=max([1,lowerrmax]))
+        plt.xlabel('R1')
+        plt.ylabel('R2')
+        plt.title("LowerError: " + figname + " : " + key)
+        plt.colorbar()
+        #plt.draw()
+        plt.savefig("LowerError: " + figname + " : " + key)
         plt.close('all')
 
 infolist = []
@@ -333,9 +430,11 @@ for i in range(4):
 #       First element is integer representing the number of simulations that saved at that (r1,r2) value
 #       Second element is dictionary of OAI interactions
 #       Third element is dictionary of OAD interactions
-#       Fourth element is dictionary of KCX1 interactions
-#       Fifth element is dictionary of KCX2 interactions
-#       Sixth element is dictionary of Water interactions
+#       Fourth element is dictionary of KCX interactions
+#       Fifth element is dictionary of Water interactions
+#       Sixth element is dictionary of OG interactions
+#       Seventh element is integer representing the number of simulations that had a proton on KCX
+#       Eigth element is integer representing the number of simulations that had a proton on OG
 
 
 logregex1 = '(-?[0-9]\.[0-9]+) (-?[0-9]\.[0-9]+)'
@@ -348,7 +447,7 @@ if debug or testing:
         for x in range(-30, 40):
             matrix.append((x,y))
 
-    cumul_hbonds = {key:[0, {}, {}, {}, {}, {}] for key in matrix}
+    cumul_hbonds = {key:[0, {}, {}, {}, {}, {}, 0, 0] for key in matrix}
     logfile = open(rootpath + "/umbsamp.log", "r")
     num_sims = 0
     for line in logfile:
@@ -366,23 +465,26 @@ if debug or testing:
                 f.close()
                 ensemble = analyze_umbsamp(dcdpath, psfpath, isdori, moltype, float(r1), float(r2))
                 num_sims += 1
-                total, OAIhbonds, OADhbonds, KCX1hbonds, KCX2hbonds, WAThbonds = ensemble.analyze_hbonds()
-                hbondlists = [OAIhbonds, OADhbonds, KCX1hbonds, KCX2hbonds, WAThbonds]
+                total, OAIhbonds, OADhbonds, KCXhbonds, WAThbonds, OGhbonds = ensemble.analyze_hbonds()
+                hbondlists = [OAIhbonds, OADhbonds, KCXhbonds, WAThbonds, OGhbonds]
                 for rvals in total:
-                    if total[rvals] != 0:
+                    if total[rvals][0] != 0:
                         sm_r1 = round(rvals[0]/10.)
                         sm_r2 = round(rvals[1]/10.)
                         r_rvals = (sm_r1, sm_r2)
-                        cumul_hbonds[r_rvals][0] += total[rvals]
+                        cumul_hbonds[r_rvals][0] += total[rvals][0]
+                        cumul_hbonds[r_rvals][6] += total[rvals][1]
+                        cumul_hbonds[r_rvals][7] += total[rvals][2]
                         for i in range(5):
                             for inter in hbondlists[i][rvals]:
                                 if inter not in keylist[i]:
                                     keylist[i].append(inter)
                                 block_incr_dict(hbondlists[i][rvals][inter], cumul_hbonds[r_rvals][i+1], inter)
+                            keylist[i].sort()
             except IOError:
                 pass
     logfile.close()
-    # cumul_lists: OAI, OAD, KCX1, KCX2, WAT
+    # cumul_lists: OAI, OAD, KCX, WAT, OG
     cumul_lists = [[] for x in range(5)]
     
     for rpoint in cumul_hbonds:
@@ -403,20 +505,19 @@ else:
         print rootpath
         try:
             inp = open(pfile, 'rb')
-            sorted_cumul_lists = pickle.load(inp)
-            all_cumul_lists.append(sorted_cumul_lists)
+            cumul_hbonds = pickle.load(inp)
             keylist = pickle.load(inp)
             all_key_lists.append(keylist)
             inp.close()
         except IOError:
-            # keylists: OAI, OAD, KCX1, KCX2, WAT
+            # keylists: OAI, OAD, KCX, WAT, OG
             keylist = [[] for x in range(5)]
             matrix = []
             for y in range(-70, -5):
                 for x in range(-30, 40):
                     matrix.append((x,y))
 
-            cumul_hbonds = {key:[0, {}, {}, {}, {}, {}] for key in matrix}
+            cumul_hbonds = {key:[0, {}, {}, {}, {}, {}, 0, 0] for key in matrix}
             logfile = open(rootpath + "/umbsamp.log", "r")
             i = 0
             for line in logfile:
@@ -431,52 +532,54 @@ else:
                         f = open(dcdpath, 'r')
                         f.close()
                         ensemble = analyze_umbsamp(dcdpath, psfpath, isdori, moltype, float(r1), float(r2))
-                        i += 1
-                        total, OAIhbonds, OADhbonds, KCX1hbonds, KCX2hbonds, WAThbonds = ensemble.analyze_hbonds()
-                        hbondlists = [OAIhbonds, OADhbonds, KCX1hbonds, KCX2hbonds, WAThbonds]
+                        total, OAIhbonds, OADhbonds, KCXhbonds, WAThbonds, OGhbonds = ensemble.analyze_hbonds()
+                        hbondlists = [OAIhbonds, OADhbonds, KCXhbonds, WAThbonds, OGhbonds]
                         for rvals in total:
-                            if total[rvals] != 0:
+                            if total[rvals][0] != 0:
                                 sm_r1 = round(rvals[0]/10.)
                                 sm_r2 = round(rvals[1]/10.)
                                 r_rvals = (sm_r1, sm_r2)
-                                cumul_hbonds[r_rvals][0] += total[rvals]
+                                cumul_hbonds[r_rvals][0] += total[rvals][0]
+                                cumul_hbonds[r_rvals][6] += total[rvals][1]
+                                cumul_hbonds[r_rvals][7] += total[rvals][2]
                                 for i in range(5):
                                     for inter in hbondlists[i][rvals]:
                                         if inter not in keylist[i]:
                                             keylist[i].append(inter)
                                         block_incr_dict(hbondlists[i][rvals][inter], cumul_hbonds[r_rvals][i+1], inter)
+                                    keylist[i].sort()
                     except IOError:
                         pass
-            logfile.close()
-            # cumul_lists: OAI, OAD, KCX1, KCX2, WAT
-            cumul_lists = [[] for x in range(5)]
-            
-            for rpoint in cumul_hbonds:
-                total = cumul_hbonds[rpoint][0]
-                #will want an indicator to know if total was zero...
-                total = float(total)
-                for i in range(5):
-                    add_to_list(cumul_lists[i], keylist[i], rpoint, cumul_hbonds, total,i+1)
 
-            sorted_cumul_lists = []
-            for i in range(5):
-                sorted_cumul_lists.append(sorted(cumul_lists[i]))
-            
             output = open(pfile, 'wb') 
-            pickle.dump(sorted_cumul_lists, output, -1)
+            pickle.dump(cumul_hbonds, output, -1)
             pickle.dump(keylist, output, -1)
             output.close()
-            
-            all_cumul_lists.append(sorted_cumul_lists)
-            all_key_lists.append(keylist)
 
-    who = ['OAI', 'OAD', 'KCX1', 'KCX2', 'WAT']
+            all_key_lists.append(keylist)
+            
+        # cumul_lists: OAI, OAD, KCX, WAT, OG
+        cumul_lists = [[] for x in range(5)]
+        
+        for rpoint in cumul_hbonds:
+            total = cumul_hbonds[rpoint][0]
+            #will want an indicator to know if total was zero...
+            total = float(total)
+            for i in range(5):
+                add_to_list(cumul_lists[i], keylist[i], rpoint, cumul_hbonds, total,i+1)
+
+        sorted_cumul_lists = []
+        for i in range(5):
+            sorted_cumul_lists.append(sorted(cumul_lists[i]))
+        all_cumul_lists.append(sorted_cumul_lists)
+
+    who = ['OAI', 'OAD', 'KCX', 'WAT', 'OG']
 
     for x in range(5):
         print who[x] + " Interacts with:"
         for y in range(4):
             print all_key_lists[y][x]
             
-            plot_2Dhist(all_cumul_lists[y][x], all_key_lists[y][x], moltypes[y] + " : " + who[x], 65)
+            plot_2Dhist_allkeys(all_cumul_lists[y][x], all_key_lists[y][x], moltypes[y] + " : " + who[x], 65)
 
 
