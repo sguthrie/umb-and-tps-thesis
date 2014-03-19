@@ -359,15 +359,17 @@ def plot_allkeys (sorted_list, key_list, intoTS, outofTS, figname):
     plt.figure(figsize=(12,10), dpi=100)
     for key in key_list:
         avg, uperr, lowerr = annoying[0], annoying[1], annoying[2]
+        asymmerr = [lowerr, uperr]
         if len(annoying) > 3:
             annoying = annoying[3:]
-        h = plt.errorbar(r1_vals, avg, yerr=err, fmt='-o')
+        h = plt.errorbar(r1_vals, avg, yerr=asymmerr, fmt='-o')
         legend_handles.append(h)
     plt.axvline(x=intoTS, color='k')
     plt.axvline(x=outofTS, color = 'k')
     plt.grid(True)
     plt.axis([-7, 7, -0.5, 1.5])
     plt.legend(legend_handles, key_list)
+    plt.title(figname)
     plt.draw()
     plt.savefig(figname)
 
