@@ -245,9 +245,6 @@ def make_key_data(size, keyname, c_hbonds, inter):
     probvals = np.ma.masked_array(np.zeros((len(c_hbonds)/size, size)), mask=np.zeros((len(c_hbonds)/size, size)))
     upper_err = np.ma.masked_array(np.zeros((len(c_hbonds)/size, size)), mask=np.zeros((len(c_hbonds)/size, size)))
     lower_err = np.ma.masked_array(np.zeros((len(c_hbonds)/size, size)), mask=np.zeros((len(c_hbonds)/size, size)))
-##    probvals = np.array(np.zeros((len(c_hbonds)/size, size)))
-##    upper_err = np.array(np.zeros((len(c_hbonds)/size, size)))
-##    lower_err = np.array(np.zeros((len(c_hbonds)/size, size)))
     rpointlist = c_hbonds.keys()
     rpointlist.sort()
     for i, rpoint in enumerate(rpointlist):
@@ -269,25 +266,52 @@ def make_key_data(size, keyname, c_hbonds, inter):
             lower_err[i/size][i % size] = wmult*(prob + zsq/(2*total) - wscorepm)
     return probvals, upper_err, lower_err
 
+
 class Umbdata:
     def __init__(self, moltype, cumul_hbonds, keylist, size):
+        z = 1.96
+        zsq = 3.84
         self.moltype = moltype
         self.size = size
         self.keylist = keylist
         self.r1points = np.zeros((len(cumul_hbonds)/size, size))
         self.r2points = np.zeros((len(cumul_hbonds)/size, size))
         self.nsims = np.zeros((len(cumul_hbonds)/size, size))
-        self.kcx_attached = np.zeros((len(cumul_hbonds)/size, size))
-        self.og_attached = np.zeros((len(cumul_hbonds)/size, size))
+        self.kcx_attached = np.ma.masked_array(np.zeros((len(cumul_hbonds)/size, size)), mask=np.zeros((len(cumul_hbonds)/size, size)))
+        self.kcx_upper_err = np.ma.masked_array(np.zeros((len(cumul_hbonds)/size, size)), mask=np.zeros((len(cumul_hbonds)/size, size)))
+        self.kcx_lower_err = np.ma.masked_array(np.zeros((len(cumul_hbonds)/size, size)), mask=np.zeros((len(cumul_hbonds)/size, size)))
+        self.og_attached = np.ma.masked_array(np.zeros((len(cumul_hbonds)/size, size)), mask=np.zeros((len(cumul_hbonds)/size, size)))
+        self.og_upper_err = np.ma.masked_array(np.zeros((len(cumul_hbonds)/size, size)), mask=np.zeros((len(cumul_hbonds)/size, size)))
+        self.og_lower_err = np.ma.masked_array(np.zeros((len(cumul_hbonds)/size, size)), mask=np.zeros((len(cumul_hbonds)/size, size)))
         rpointlist = cumul_hbonds.keys()
         rpointlist.sort()
         for i, rpoint in enumerate(rpointlist):
             self.r1points[i/size][i % size] = rpoint[0]/10.
             self.r2points[i/size][i % size] = rpoint[1]/10.
-            self.nsims[i/size][i % size] = cumul_hbonds[rpoint][0]
-            if cumul_hbonds[rpoint][0] != 0:
-                self.kcx_attached[i/size][i % size] = cumul_hbonds[rpoint][6]/float(cumul_hbonds[rpoint][0])
-                self.og_attached[i/size][i % size] = cumul_hbonds[rpoint][7]/float(cumul_hbonds[rpoint][0])
+            total = cumul_hbonds[rpoint][0]
+            self.nsims[i/size][i % size] = total
+            if cumul_hbonds[rpoint][0] == 0:
+                self.kcx_attached[i/size][i % size] = np.ma.masked
+                self.og_attached[i/size][i % size] = np.ma.masked
+                self.kcx_upper_err[i/size][i % size] = np.ma.masked
+                self.kcx_lower_err[i/size][i % size] = np.ma.masked
+                self.og_upper_err[i/size][i % size] = np.ma.masked
+                self.og_lower_err[i/size][i % size] = np.ma.masked
+            else:
+                total = float(total)
+                probkcx = cumul_hbonds[rpoint][6]/total
+                probog = cumul_hbonds[rpoint][7]/total
+                kcx_wscorepm = z*math.sqrt(probkcx*(1-probkcx)/total + zsq/(4*total**2))
+                og_wscorepm = z*math.sqrt(probog*(1-probog)/total + zsq/(4*total**2))
+                wmult = 1/(1+zsq/total)
+            
+                self.kcx_attached[i/size][i % size] = probkcx
+                self.og_attached[i/size][i % size] = probog
+                self.kcx_upper_err[i/size][i % size] = wmult*(probkcx + zsq/(2*total) + kcx_wscorepm)
+                self.kcx_lower_err[i/size][i % size] = wmult*(probkcx + zsq/(2*total) - kcx_wscorepm)
+                self.og_upper_err[i/size][i % size] = wmult*(probog + zsq/(2*total) + og_wscorepm)
+                self.og_lower_err[i/size][i % size] = wmult*(probog + zsq/(2*total) - og_wscorepm)
+                
             
         self.OAI = {}
         self.OAD = {}
@@ -306,6 +330,10 @@ class Umbdata:
             return self.interdicts[inter_i][keyname]
         else:
             return [None, None, None]
+    def get_kcx_data(self):
+        return self.kcx_attached, self.kcx_upper_err, self.kcx_lower_err
+    def get_og_data(self):
+        return self.og_attached, self.og_upper_err, self.og_lower_err
 
 
 def get_dist(atom1, atom2):
@@ -367,51 +395,84 @@ def analyze_umbsamp(dcd_filepath, psf_filepath, is_dori, moltype, r1, r2):
     ensemble = UmbEnsemble(universe, is_dori, moltype, dcd_filepath, r1, r2, r1trace, r2trace, r2extra)
     return ensemble
 
-def plot_2Dhist(bigstruct, inter_i, keyname, figname):
-    plt.figure(figsize=(12,12))
+def plot_2Dhist(bigstruct, inter_i, keyname, figname, ploterr=True):
+    plt.figure(figsize=(22,22))
+    pnum = [[1,3,5],[2,4,6], [7,9,11], [8,10,12]]
+    for i in range(4):
+        [avg, uperr, lowerr] = bigstruct[i].get_plot_data(inter_i, keyname)
+        if ploterr:
+            plt.subplot(6, 2, pnum[i][0])
+            if avg != None:
+                plt.pcolor(bigstruct[i].r1points, bigstruct[i].r2points, uperr, vmin=0, vmax=1)
+                plt.title("UpperError for " + bigstruct[i].moltype + " : " + figname)
+                plt.colorbar()
+                plt.subplot(6,2, pnum[i][1])
+                plt.pcolor(bigstruct[i].r1points, bigstruct[i].r2points, avg, vmin=0, vmax=1)
+                plt.title(bigstruct[i].moltype + " : " + figname)
+                plt.colorbar()
+                plt.subplot(6,2, pnum[i][2])
+                plt.pcolor(bigstruct[i].r1points, bigstruct[i].r2points, lowerr, vmin=0, vmax=1)
+                plt.title("LowerError for " + bigstruct[i].moltype + " : " + figname)
+                plt.colorbar()
+            else:
+                plt.title(bigstruct[i].moltype + " had no " + figname + " interactions")
+        else:
+            plt.subplot(2,2,1+i)
+            if avg != None:
+                plt.pcolor(bigstruct[i].r1points, bigstruct[i].r2points, avg, vmin=0, vmax=1)
+                plt.xlabel('R1')
+                plt.ylabel('R2')
+                plt.title(bigstruct[i].moltype + " : " + figname)
+                plt.colorbar()
+            else:
+                plt.title(bigstruct[i].moltype + " had no " + figname + " interactions")
+    plt.draw()
+    if ploterr:
+        plt.savefig("Umb" + figname + "WithError.png")
+    else:
+        plt.savefig("Umb" + figname + "NoErrorShown.png")
+    plt.close()
+
+def plot_prot_movement(bigstruct):
+    fsize = 22
+    plt.figure(figsize=(fsize,fsize))
     pnum = [[1,3,5],[2,4,6], [7,9,11], [8,10,12]]
     for i in range(4):
         plt.subplot(6, 2, pnum[i][0])
-        [avg, uperr, lowerr] = bigstruct[i].get_plot_data(inter_i, keyname)
-        if avg != None:
-            plt.pcolor(bigstruct[i].r1points, bigstruct[i].r2points, uperr, vmin=0, vmax=1)
-            plt.xlabel('R1')
-            plt.ylabel('R2')
-            plt.title("UpperError for " + bigstruct[i].moltype + " : " + figname)
-            plt.colorbar()
-            plt.subplot(6,2, pnum[i][1])
-            plt.pcolor(bigstruct[i].r1points, bigstruct[i].r2points, avg, vmin=0, vmax=1)
-            plt.xlabel('R1')
-            plt.ylabel('R2')
-            plt.title(bigstruct[i].moltype + " : " + figname)
-            plt.colorbar()
-            plt.subplot(6,2, pnum[i][2])
-            plt.pcolor(bigstruct[i].r1points, bigstruct[i].r2points, lowerr, vmin=0, vmax=1)
-            plt.xlabel('R1')
-            plt.ylabel('R2')
-            plt.title("LowerError for " + bigstruct[i].moltype + " : " + figname)
-            plt.colorbar()
-        else:
-            plt.title(bigstruct[i].moltype + " had no " + figname + " interactions")
+        kcxavg, kcxuperr, kcxlowerr = bigstruct[i].get_kcx_data()
+        plt.pcolor(bigstruct[i].r1points, bigstruct[i].r2points, kcxuperr, vmin=0, vmax=1)
+        plt.title("UpperError for " + bigstruct[i].moltype + " : KCX protonation probability")
+        plt.colorbar()
+        plt.subplot(6,2, pnum[i][1])
+        plt.pcolor(bigstruct[i].r1points, bigstruct[i].r2points, kcxavg, vmin=0, vmax=1)
+        plt.title(bigstruct[i].moltype + " : KCX protonation probability")
+        plt.colorbar()
+        plt.subplot(6,2, pnum[i][2])
+        plt.pcolor(bigstruct[i].r1points, bigstruct[i].r2points, kcxlowerr, vmin=0, vmax=1)
+        plt.title("LowerError for " + bigstruct[i].moltype + " : KCX protonation probability")
+        plt.colorbar()
     plt.draw()
-    plt.savefig("Umb" + figname + ".png")
-    plt.close()
+    plt.savefig("UmbKCXprot.png")
 
-
-def plot_2Dhist_noerror(bigstruct, inter_i, keyname, figname):
-    plt.figure(figsize=(12,10))
+    plt.figure(figsize=(fsize,fsize))
+    pnum = [[1,3,5],[2,4,6], [7,9,11], [8,10,12]]
     for i in range(4):
-        [avg, uperr, lowerr] = bigstruct[i].get_plot_data(inter_i, keyname)
-        if avg != None:
-            plt.subplot(2, 2, 1+i)
-            plt.pcolor(bigstruct[i].r1points, bigstruct[i].r2points, avg, vmin=0, vmax=1)
-            plt.xlabel('R1')
-            plt.ylabel('R2')
-            plt.title(bigstruct[i].moltype + " : " + figname)
-            plt.colorbar()
-        else:
-            plt.text(0, 0, bigstruct[i].moltype + " had no " + figname + " interactions")
+        plt.subplot(6, 2, pnum[i][0])
+        ogavg, oguperr, oglowerr = bigstruct[i].get_og_data()
+        plt.pcolor(bigstruct[i].r1points, bigstruct[i].r2points, oguperr, vmin=0, vmax=1)
+        plt.title("UpperError for " + bigstruct[i].moltype + " : OG protonation probability")
+        plt.colorbar()
+        plt.subplot(6,2, pnum[i][1])
+        plt.pcolor(bigstruct[i].r1points, bigstruct[i].r2points, ogavg, vmin=0, vmax=1)
+        plt.title(bigstruct[i].moltype + " : OG protonation probability")
+        plt.colorbar()
+        plt.subplot(6,2, pnum[i][2])
+        plt.pcolor(bigstruct[i].r1points, bigstruct[i].r2points, oglowerr, vmin=0, vmax=1)
+        plt.title("LowerError for " + bigstruct[i].moltype + " : OG protonation probability")
+        plt.colorbar()
     plt.draw()
+    plt.savefig("UmbOGprot.png")
+    plt.close('all')
 
 infolist = []
 psfpaths = ["/data/sguthrie/imivsdori/dori_sim/sim2/template/dori.psf", "/data/sguthrie/imivsdori/m_imi_sim/from_imi/sim1/template/mimi.psf",
@@ -420,10 +481,9 @@ rootpaths = ["/data/sguthrie/imivsdori/dori_sim/sim2", "/data/sguthrie/imivsdori
             "/data/sguthrie/imivsdori/sdori_sim/from_dori/sim1", "/data/sguthrie/imivsdori/imi_sim/sim2"]
 isdoris = [True, False, True, False]
 moltypes = ['SDR', 'SMI', 'SSD', 'SIM']
-times = [65, 65, 65, 65]
 picklefiles = ['UmbDori_interactions2.pkl', 'UmbMimi_interactions2.pkl', 'UmbSDori_interactions2.pkl', 'UmbImi_interactions2.pkl']
 for i in range(4):
-    tmp = [psfpaths[i], rootpaths[i], isdoris[i], moltypes[i], times[i], picklefiles[i]]
+    tmp = [psfpaths[i], rootpaths[i], isdoris[i], moltypes[i], picklefiles[i]]
     infolist.append(tmp)
 
 #cumul_hbonds structure:
@@ -437,156 +497,50 @@ for i in range(4):
 #       Sixth element is dictionary of OG interactions
 #       Seventh element is integer representing the number of simulations that had a proton on KCX
 #       Eigth element is integer representing the number of simulations that had a proton on OG
-##        try:
-##            inp = open(pfile, 'rb')
-##            bigst = pickle.load(inp)
-##            keylist = pickle.load(inp)
-##            inp.close()
-##        except IOError:
-            # keylists: OAI, OAD, KCX, WAT, OG
+
+# keylists: OAI, OAD, KCX, WAT, OG
 
 logregex1 = '(-?[0-9]\.[0-9]+) (-?[0-9]\.[0-9]+)'
 logregex2 = '(?<=#)(/[-[0-9\.\w]+)+'
-if debug or testing:
-    psfpath, rootpath, isdori, moltype, time, pfile = infolist[1]
-    keylist = [[] for x in range(5)]
-    matrix = []
-    for y in range(-30, -5):
-        for x in range(-30, 30):
-            matrix.append((x,y))
 
-    cumul_hbonds = {key:[0, {}, {}, {}, {}, {}, 0, 0] for key in matrix}
-    logfile = open(rootpath + "/umbsamp.log", "r")
-    num_sims = 0
-    for line in logfile:
-        m = re.search(logregex1, line)
-        if m != None:
-            if num_sims >= 1:
-                break
-            r1 = m.group(1)
-            r2 = m.group(2)
-            x = re.search(logregex2, line)
-            dcdpath = x.group(0) + "/cap_production.dcd"
-            try:
-                #Check if dcd exists
-                f = open(dcdpath, 'r')
-                f.close()
-                ensemble = analyze_umbsamp(dcdpath, psfpath, isdori, moltype, float(r1), float(r2))
-                num_sims += 1
-                total, OAIhbonds, OADhbonds, KCXhbonds, WAThbonds, OGhbonds = ensemble.analyze_hbonds()
-                hbondlists = [OAIhbonds, OADhbonds, KCXhbonds, WAThbonds, OGhbonds]
-                for rvals in total:
-                    if total[rvals][0] != 0:
-                        sm_r1 = round(rvals[0]/10.)
-                        sm_r2 = round(rvals[1]/10.)
-                        r_rvals = (sm_r1, sm_r2)
-                        cumul_hbonds[r_rvals][0] += total[rvals][0]
-                        cumul_hbonds[r_rvals][6] += total[rvals][1]
-                        cumul_hbonds[r_rvals][7] += total[rvals][2]
-                        for i in range(5):
-                            for inter in hbondlists[i][rvals]:
-                                if inter not in keylist[i]:
-                                    keylist[i].append(inter)
-                                block_incr_dict(hbondlists[i][rvals][inter], cumul_hbonds[r_rvals][i+1], inter)
-                            keylist[i].sort()
-            except IOError:
-                pass
-    logfile.close()
-    
-else:
-    try:
-        inp = open('UmbInteractions.pkl', 'rb')
-        bigstruct = pickle.load(inp)
-        all_key_lists = pickle.load(inp)
+try:
+    inp = open('UmbInteractions.pkl', 'rb')
+    bigstruct = pickle.load(inp)
+    all_key_lists = pickle.load(inp)
+    inp.close()
+except IOError:
+    bigstruct = []
+    all_key_lists = []
+    for foo in range(4):
+        psfpath, rootpath, isdori, moltype, pfile = infolist[foo]
+        print rootpath
+        inp = open(pfile, 'rb')
+        cumul_hbonds = pickle.load(inp)
+        keylist = pickle.load(inp)
         inp.close()
-    except IOError:
-        bigstruct = []
-        all_key_lists = []
-        for foo in range(4):
-            psfpath, rootpath, isdori, moltype, time, pfile = infolist[foo]
-            print rootpath
-            keylist = [[] for x in range(5)]
-            matrix = []
-            for y in range(-30, -5):
-                for x in range(-30, 30):
-                    matrix.append((x,y))
-            cumul_hbonds = {key:[0, {}, {}, {}, {}, {}, 0, 0] for key in matrix}
-            logfile = open(rootpath + "/umbsamp.log", "r")
-            i = 0
-            for line in logfile:
-                m = re.search(logregex1, line)
-                if m != None:
-                    r1 = m.group(1)
-                    r2 = m.group(2)
-                    x = re.search(logregex2, line)
-                    dcdpath = x.group(0) + "/cap_production.dcd"
-                    try:
-                        #Check if dcd exists
-                        f = open(dcdpath, 'r')
-                        f.close()
-                        ensemble = analyze_umbsamp(dcdpath, psfpath, isdori, moltype, float(r1), float(r2))
-                        total, OAIhbonds, OADhbonds, KCXhbonds, WAThbonds, OGhbonds = ensemble.analyze_hbonds()
-                        hbondlists = [OAIhbonds, OADhbonds, KCXhbonds, WAThbonds, OGhbonds]
-                        for rvals in total:
-                            if total[rvals][0] != 0:
-                                sm_r1 = round(rvals[0]/10.)
-                                sm_r2 = round(rvals[1]/10.)
-                                r_rvals = (sm_r1, sm_r2)
-                                cumul_hbonds[r_rvals][0] += total[rvals][0]
-                                cumul_hbonds[r_rvals][6] += total[rvals][1]
-                                cumul_hbonds[r_rvals][7] += total[rvals][2]
-                                for i in range(5):
-                                    for inter in hbondlists[i][rvals]:
-                                        if inter not in keylist[i]:
-                                            keylist[i].append(inter)
-                                        block_incr_dict(hbondlists[i][rvals][inter], cumul_hbonds[r_rvals][i+1], inter)
-                                    keylist[i].sort()
-                    except IOError:
-                        pass
-            logfile.close()
-            output = open(pfile, 'wb')
-            pickle.dump(cumul_hbonds, output, -1)
-            pickle.dump(keylist, output, -1)
-            output.close()
-            
-##            all_key_lists.append(keylist)
-##            data = Umbdata(moltype, cumul_hbonds, keylist, time)
-##            bigstruct.append(data)
-##
-##        output = open('UmbInteractions.pkl', 'wb') 
-##        pickle.dump(bigstruct, output, -1)
-##        pickle.dump(all_key_lists, output, -1)
-##        output.close()
 
-    who = ['OAI', 'OAD', 'KCX', 'WAT', 'OG']
-    keysets = []
-    for x in range(5):
-        #print who[x], "interacts with: "
-        foo = set()
-        for y in range(4):
-            foo |= set(all_key_lists[y][x])
-        keysets.append(foo)
-        #print foo
-        
-    for x in range(5):
-        for keyname in keysets[x]:
-            plot_2Dhist(bigstruct, x, keyname, who[x] + " : " + keyname)
-#plot_2Dhist(bigstruct, 0, 'SER128', who[0] + " : SER128")
+        all_key_lists.append(keylist)
+        data = Umbdata(moltype, cumul_hbonds, keylist, 25)
+        bigstruct.append(data)
 
-##
-##def plot_foo(bigstruct, figname):
-##    plt.figure(figsize=(12,10), dpi=100)
-##    for i in range(4):
-##        plt.subplot(2, 2, 1+i)
-##        plt.pcolor(bigstruct[i].r1points, bigstruct[i].r2points, bigstruct[i].kcx_attached, vmin=0, vmax=1)
-##        plt.xlabel('R1')
-##        plt.ylabel('R2')
-##        plt.title(bigstruct[i].moltype + " : " + figname)
-##        plt.colorbar()
-##
-##    plt.draw()
+    output = open('UmbInteractions.pkl', 'wb') 
+    pickle.dump(bigstruct, output, -1)
+    pickle.dump(all_key_lists, output, -1)
+    output.close()
 
-#plot_foo(bigstruct, "testing kcx interactions")
+who = ['OAI', 'OAD', 'KCX', 'WAT', 'OG']
+keysets = []
+for x in range(5):
+    foo = set()
+    for y in range(4):
+        foo |= set(all_key_lists[y][x])
+    keysets.append(foo)
+    
+for x in range(5):
+    for keyname in keysets[x]:
+        plot_2Dhist(bigstruct, x, keyname, who[x] + " : " + keyname)
+
+plot_prot_movement(bigstruct)
 
 
 
