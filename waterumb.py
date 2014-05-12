@@ -1,15 +1,18 @@
+#umbsamp_ensemble_analysis with numpy
+#Umbrella Sampling Ensemble Analysis
+
 import MDAnalysis.analysis.hbonds as hydbond
+import MDAnalysis.analysis.align as ali
 import MDAnalysis
 import math
 from matplotlib import cm
-import matplotlib.pyplot as plt
+from matplotlib import pyplot as plt
 import numpy as np
 import os
 import pickle
 import re
 
 plt.ion()
-
 
 global debug
 debug = False
@@ -22,6 +25,16 @@ def print_hbonds(b, inter, r1):
         print b
         print "Is classified to be interacting with " + inter
         print "At r1 = ", r1
+        
+#To investigate:
+#   What is the hydroxyethyl group interacting with?
+#       KCX?, beta5-beta6 loop?
+#   What is balancing the oxygen in the intermediate?
+#   What attacks the ester? OH or H2O?
+#   Map of proton moving from water
+#   
+#Can I investigate?:
+#   Tautomerization
 
 def incr_dict(dictionary, key):
     dictionary[key] = 1
@@ -35,75 +48,25 @@ def block_incr_dict(amount, d, k):
         d[k] += amount
     else:
         d[k] = amount
-    
-# Import .dcd files
-
-#To investigate:
-#   What is the hydroxyethyl group interacting with?
-#       KCX?, beta5-beta6 loop?
-#   What is balancing the oxygen in the intermediate?
-#   What attacks the ester? OH or H2O?
-#   Map of proton moving from water
-#   
-#Can I investigate?:
-#   Tautomerization
-
 
 regex = '[A-Z]+[0-9]+(?=:)'
 
 def getKey(item):
-    return item[0]
+    return item[0], item[1]
 
-class BigTraj:
-    def __init__(self, universe, is_dori, name, r1, r2, moltype):
+class WaterUmbEnsemble:
+    def __init__(self, universe, is_dori, moltype, foldername, r1, r1trace):
+        """ if is_dori:
+                moltype = SDR or SSD
+            else:
+                moltype = SIM or SMI"""
         self.universe = universe
-        self.small_trajs = []
         self.is_dori = is_dori
-        self.name = name
-        self.r1 = r1
-        self.r2 = r2
         self.moltype = moltype
-        self.kcx_attached, self.og_attached = self.analyze_protons()
-    def add_traj(self, newtraj):
-        self.small_trajs.append(newtraj)
-        
-    def analyze_protons(self):
-        #r2extra is list of lists:
-        #   [dist(H1 - OH1), dist(H1 - OH2), dist(H1-watOH2),
-        #    dist(H2 - OH1), dist(H2 - OH2), dist(H2-watOH2),
-        #    dist(H1-OG), dist(H2-OG)]
-        prot_kcx = []
-        prot_og = []
-        r_cov = 1.31
-        for h11, h12, h1w, h21, h22, h2w, h1o, h2o in self.r2:
-            kcx = []
-            kcx_attached = False
-            og = []
-            og_attached = False
-            if h11 <= r_cov:
-                kcx_attached = True
-                kcx.append('(H1-OH1)')
-            if h12 <= r_cov:
-                kcx_attached = True
-                kcx.append('(H1-OH2)')
-            if h21 <= r_cov:
-                kcx_attached = True
-                kcx.append('(H2-OH1)')
-            if h22 <= r_cov:
-                kcx_attached = True
-                kcx.append('(H2-OH2)')
-            if h1o <= r_cov:
-                og_attached = True
-                og.append('(H1-OG)')
-            if h2o <= r_cov:
-                og_attached = True
-                og.append('(H2-OG)')
-            toappend = [kcx_attached] + [x for x in kcx]
-            prot_kcx.append(toappend)
-            toappend = [og_attached] + [x for x in og]
-            prot_og.append(toappend)
-        foo = [prot_kcx, prot_og]
-        return foo
+        self.name = foldername
+        self.r1 = r1
+        self.r1trace = r1trace
+
     def analyze_hbonds(self):
         if self.is_dori:
             examinestr = "(atom A 81 OAI) or (atom A 81 OAD) or (atom A 84 OH1) or (atom A 84 OH1) " + \
@@ -146,26 +109,27 @@ class BigTraj:
                                             acceptors=new_acceptors) #, angle=150.0
         hana.run()
         h_bond_results = hana.timeseries
+        r1lower = int((self.r1 - 2)*100)
+        r1higher = int((self.r1 + 2)*100)
 
-        total = {t:[0, 0, 0] for t in range(-700, 700)}
-        OAIhbonds = {t:{} for t in range(-700, 700)}
-        OADhbonds = {t:{} for t in range(-700, 700)}
-        KCXhbonds = {t:{} for t in range(-700, 700)}
-        WAThbonds = {t:{} for t in range(-700, 700)}
-        OGhbonds = {t:{} for t in range(-700, 700)}
-        tailhbonds = {t:{} for t in range(-700, 700)}
+        matrix = range(r1lower, r1higher)
+
+        total = {key:[0, 0, 0] for key in matrix}
+        OAIhbonds = {key:{} for key in matrix}
+        OADhbonds = {key:{} for key in matrix}
+        KCXhbonds = {key:{} for key in matrix}
+        WAThbonds = {key:{} for key in matrix}
+        OGhbonds = {key:{} for key in matrix}
+        tailhbonds = {key:{} for key in matrix}
 
         r_cov = 1.31
         #Fill dictionaries; 0 if bond is not present; 1 if it is
-        for tstep, foo in enumerate(zip(self.kcx_attached, self.og_attached, self.r1, h_bond_results)):
-            prot_kcx, prot_og, r1, frame = foo
+        for tstep, foo in enumerate(zip(self.r1trace, h_bond_results)):
+            r1, frame = foo
             r1 = int(round(r1, 2)*100)
             total[r1][0] += 1
-            if prot_kcx[0]:
-                total[r1][1] += 1
-            if prot_og[0]:
-                total[r1][2] += 1
-            #r2 is list of lists:
+
+            #r2extra is list of lists:
             #   [dist(H1 - OH1), dist(H1 - OH2), dist(H1-watOH2),
             #    dist(H2 - OH1), dist(H2 - OH2), dist(H2-watOH2),
             #    dist(H1-OG), dist(H2-OG)]
@@ -179,30 +143,11 @@ class BigTraj:
                     print_hbonds(hbond, "OAIdonor", r1/100.)
                     incr_dict(OAIhbonds[r1], acceptorstr)
                 if hbond[2] == WATdonor1:
-                    if self.r2[tstep][0] <= r_cov or self.r2[tstep][1] <= r_cov:
-                        print_hbonds(hbond, "KCXdonor", r1/100.)
-                        incr_dict(KCXhbonds[r1], acceptorstr)
-                    if self.r2[tstep][2] <= r_cov:
-                        print_hbonds(hbond, "WATdonor", r1/100.)
-                        incr_dict(WAThbonds[r1], acceptorstr)
-                    if self.r2[tstep][6] <= r_cov:
-                        print_hbonds(hbond, "OGdonor", r1/100.)
-                        incr_dict(OGhbonds[r1], acceptorstr)
-                    #Should not ever not be in the case where it's flying in the ether, since it wouldn't be
-                    #counted by the hbonds.py algorithm
-                        
+                    print_hbonds(hbond, "WATdonor", r1/100.)
+                    incr_dict(WAThbonds[r1], acceptorstr)
                 if hbond[2] == WATdonor2:
-                    if self.r2[tstep][3] <= r_cov or self.r2[tstep][4] <= r_cov:
-                        print_hbonds(hbond, "KCXdonor", r1/100.)
-                        incr_dict(KCXhbonds[r1], acceptorstr)
-                    if self.r2[tstep][5] <= r_cov:
-                        print_hbonds(hbond, "WATdonor", r1/100.)
-                        incr_dict(WAThbonds[r1], acceptorstr)
-                    if self.r2[tstep][7] <= r_cov:
-                        print_hbonds(hbond, "OGdonor", r1/100.)
-                        incr_dict(OGhbonds[r1], acceptorstr)
-                    #Should not ever not be in the case where it's flying in the ether, since it wouldn't be
-                    #counted by the hbonds.py algorithm
+                    print_hbonds(hbond, "WATdonor", r1/100.)
+                    incr_dict(WAThbonds[r1], acceptorstr)
                 if hbond[2] in taildonors:
                     print_hbonds(hbond, "TailDonor", r1/100.)
                     incr_dict(tailhbonds[r1], acceptorstr)
@@ -226,8 +171,16 @@ class BigTraj:
                     print_hbonds(hbond, "TailAcceptor", r1/100.)
                     incr_dict(tailhbonds[r1], donorstr)
         return total, OAIhbonds, OADhbonds, KCXhbonds, WAThbonds, OGhbonds, tailhbonds
+    
+    def plot(self):
+        plt.figure()
+        plt.plot(self.r1trace, self.r2trace, 'go')
+        plt.draw()
 
-def make_key_data(size, keyname, c_hbonds, inter):
+
+
+    
+def make_key_data(keyname, c_hbonds, inter):
     '''Calculates probability and wilson error bars at each point. Returns np masked arrays '''
     z = 1.96
     zsq = 3.84
@@ -253,6 +206,7 @@ def make_key_data(size, keyname, c_hbonds, inter):
             upper_err[i] = wmult*(prob + zsq/(2*total) + wscorepm)
             lower_err[i] = wmult*(prob + zsq/(2*total) - wscorepm)
     return probvals, upper_err, lower_err
+    
 
 #cumul_hbonds structure:
 #   overall: dictionary indexed by (r1 value*100, r2 value*100)
@@ -267,14 +221,14 @@ def make_key_data(size, keyname, c_hbonds, inter):
 #       7: dictionary - OG interactions
 #       8: dictionary - Tail interactions  
 
+
 # keylists: OAI, OAD, KCX, WAT, OG, Tail
 
-class Trajdata:
-    def __init__(self, moltype, cumul_hbonds, keylist, size):
+class WaterUmbdata:
+    def __init__(self, moltype, cumul_hbonds, keylist):
         z = 1.96
         zsq = 3.84
         self.moltype = moltype
-        self.size = size
         self.keylist = keylist
         self.r1points = np.zeros(len(cumul_hbonds))
         self.nsims = np.zeros(len(cumul_hbonds))
@@ -287,7 +241,7 @@ class Trajdata:
         rpointlist = cumul_hbonds.keys()
         rpointlist.sort()
         for i, rpoint in enumerate(rpointlist):
-            self.r1points[i] = rpoint/10.
+            self.r1points[i] = rpoint/100.
             total = cumul_hbonds[rpoint][0]
             self.nsims[i] = total
             if cumul_hbonds[rpoint][0] == 0:
@@ -322,91 +276,97 @@ class Trajdata:
 
         for i in range(6):
             for keyname in self.keylist[i]:
-                probvals, upper_err, lower_err = make_key_data(self.size, keyname, cumul_hbonds, i)
+                probvals, upper_err, lower_err = make_key_data(keyname, cumul_hbonds, i)
                 self.interdicts[i][keyname] = [probvals, upper_err, lower_err]
 
     def get_plot_data(self, inter_i, keyname):
         if keyname in self.interdicts[inter_i]:
             return self.interdicts[inter_i][keyname]
+        elif keyname in ['SDR81', 'SIM81']:
+            return self.interdicts[inter_i][self.moltype + '81']
         else:
             return [None, None, None]
     def get_kcx_data(self):
         return self.kcx_attached, self.kcx_upper_err, self.kcx_lower_err
     def get_og_data(self):
         return self.og_attached, self.og_upper_err, self.og_lower_err
-    
+
 
 def get_dist(atom1, atom2):
     return math.sqrt(sum((atom1[i] - atom2[i])**2 for i in range(3)))
 
-def analyze_big_traj(dcd_filepath, psf_filepath, is_dori, moltype):
+def analyze_umbsamp(dcd_filepath, psf_filepath, is_dori, moltype, r1):
     universe = MDAnalysis.Universe(psf_filepath, dcd_filepath)
-    #Dori order is:
-        ##0 < Atom 777: name 'OG' of type '74' of resname 'SDR', resid 81 and segid 'A'>
-        ##1 < Atom 778: name 'CAJ' of type '32' of resname 'SDR', resid 81 and segid 'A'>
-        ##2 < Atom 885: name 'OH1' of type '72' of resname 'KCX', resid 84 and segid 'A'>
-        ##3 < Atom 886: name 'OH2' of type '72' of resname 'KCX', resid 84 and segid 'A'>
-        ##4 < Atom 3955: name 'OH2' of type '75' of resname 'OH2', resid 277 and segid 'W'>
-        ##5 < Atom 3956: name 'H1' of type '4' of resname 'OH2', resid 277 and segid 'W'>
-        ##6 < Atom 3957: name 'H2' of type '4' of resname 'OH2', resid 277 and segid 'W'>
-        ##
-    #Imi order is:
-        ##0 < Atom 775: name 'OG' of type '73' of resname 'SIM', resid 81 and segid 'A'>
-        ##1 < Atom 778: name 'C7' of type '32' of resname 'SIM', resid 81 and segid 'A'>
-        ##2 < Atom 871: name 'OH1' of type '72' of resname 'KCX', resid 84 and segid 'A'>
-        ##3 < Atom 872: name 'OH2' of type '72' of resname 'KCX', resid 84 and segid 'A'>
-        ##4 < Atom 3941: name 'OH2' of type '75' of resname 'OH2', resid 277 and segid 'W'>
-        ##5 < Atom 3942: name 'H1' of type '4' of resname 'OH2', resid 277 and segid 'W'>
-        ##6 < Atom 3943: name 'H2' of type '4' of resname 'OH2', resid 277 and segid 'W'>
-
     if is_dori:
-        aoi = universe.selectAtoms("(atom A 81 CAJ) or (atom A 81 OG) or " +
-                                   "(atom W 277 OH2) or (atom W 277 H1) or " +
-                                   "(atom W 277 H2) or (atom A 84 OH2) or " +
-                                   "(atom A 84 OH1)")
+        aoi = universe.selectAtoms("(atom A 81 CAJ) or (atom W 277 OH2) ")
     else:
-        aoi = universe.selectAtoms("(atom A 81 C7) or (atom A 81 OG) or " +
-                                   "(atom W 277 OH2) or (atom W 277 H1) or " +
-                                   "(atom W 277 H2) or (atom A 84 OH2) or " +
-                                   "(atom A 84 OH1)")
-    r1 = []
-    #r2 is list of lists:
-    #   [dist(H1 - OH1), dist(H1 - OH2), dist(H1-watOH2), dist(H2 - OH1), dist(H2 - OH2), dist(H2-watOH2), dist(H1-OG), dist(H2-OG)]
-    r2 = []
+        aoi = universe.selectAtoms("(atom A 81 C7) or (atom W 277 OH2)")
+    r1trace = []
     rxnatoms = universe.trajectory.timeseries(aoi)
     for t in range(rxnatoms.shape[1]):
-        m = get_dist(rxnatoms[4][t], rxnatoms[1][t])
-        b = get_dist(rxnatoms[0][t], rxnatoms[1][t])
-        r1.append(b - m)
-        h1 = get_dist(rxnatoms[5][t], rxnatoms[2][t])
-        h2 = get_dist(rxnatoms[5][t], rxnatoms[3][t])
-        h3 = get_dist(rxnatoms[5][t], rxnatoms[4][t])
-        h4 = get_dist(rxnatoms[6][t], rxnatoms[2][t])
-        h5 = get_dist(rxnatoms[6][t], rxnatoms[3][t])
-        h6 = get_dist(rxnatoms[6][t], rxnatoms[4][t])
-        h7 = get_dist(rxnatoms[5][t], rxnatoms[0][t])
-        h8 = get_dist(rxnatoms[6][t], rxnatoms[0][t])
-        r2.append([h1, h2, h3, h4, h5, h6, h7, h8])
-    #501 steps per transition
-    big_traj = BigTraj(universe, is_dori, dcd_filepath, r1, r2, moltype)
-    return big_traj
+        m = get_dist(rxnatoms[0][t], rxnatoms[1][t])
+        r1trace.append(-m)
 
+    ensemble = WaterUmbEnsemble(universe, is_dori, moltype, dcd_filepath, r1, r1trace)
+    return ensemble
 
+def smooth_avg(avg):
+    smoothed = np.ma.copy(avg)
+    maskarr = np.ma.getmask(avg)
+    for i in range(len(avg)):
+        if not maskarr[i]:
+            tmp = []
+            for across in range(i-2, i+3):
+                if not np.ma.getmask(avg[across]):
+                    tmp.append(avg[across])
+            if len(tmp) == 0:
+                smoothed[i] = np.ma.masked
+            else:
+                smoothed[i] = sum(tmp)/float(len(tmp))
+    return smoothed
+    
+def smooth_all(avg, uperr, lowerr):
+    smoothed = np.ma.copy(avg)
+    superr = np.ma.copy(uperr)
+    slowerr = np.ma.copy(lowerr)
+    maskarr = np.ma.getmask(avg)
+    for i in range(len(avg)):
+        if not maskarr[i]:
+            tmp = []
+            ltmp = []
+            utmp = []
+            for across in range(i-2, i+3):
+                if not np.ma.getmask(avg[across]):
+                    tmp.append(avg[across])
+                    utmp.append(uperr[across])
+                    ltmp.append(lowerr[across])
+            if len(tmp) == 0:
+                smoothed[i] = np.ma.masked
+                superr[i] = np.ma.masked
+                slowerr[i] = np.ma.masked
+            else:
+                smoothed[i] = sum(tmp)/float(len(tmp))
+                superr[i] = sum(utmp)/float(len(utmp))
+                slowerr[i] = sum(ltmp)/float(len(ltmp))
+    return smoothed, superr, slowerr
+    
 def plot_all(bigstruct, inter_i, keyname, figname):
     plt.figure(figsize=(14,8))
     colors = ['b', 'g']
     for i in range(2):
         [avg, uperr, lowerr] = bigstruct[i].get_plot_data(inter_i, keyname)
-        asymmerr = [lowerr, uperr]
         if avg != None:
+            avg, uperr, lowerr = smooth_all(avg, uperr, lowerr)
+            asymmerr = [lowerr, uperr]
             plt.errorbar(bigstruct[i].r1points, avg, yerr=asymmerr, fmt='-o', mfc=colors[i], label=bigstruct[i].moltype)
     plt.legend()
     plt.xlabel('R1')
     plt.ylabel('Probability of Interaction')
     plt.title(figname)
     plt.draw()
-    plt.savefig("Traj" + figname + ".png")
+    plt.savefig("SmoothedWaterUmb" + figname + ".png")
     plt.close()
+
 
 def plot_prot_movement(bigstruct):
     plt.figure(figsize=(14,8))
@@ -420,7 +380,7 @@ def plot_prot_movement(bigstruct):
     plt.ylabel('Probability of Interaction')
     plt.title("KCX protonation probability")
     plt.draw()
-    plt.savefig("TrajKCXprot.png")
+    plt.savefig("WaterUmbKCXprot.png")
 
     plt.figure(figsize=(14,8))
     for i in range(2):
@@ -432,26 +392,26 @@ def plot_prot_movement(bigstruct):
     plt.ylabel('Probability of Interaction')
     plt.title("OG protonation probability")
     plt.draw()
-    plt.savefig("TrajOGprot.png")
+    plt.savefig("WaterUmbOGprot.png")
     plt.close('all')
+    
 
 infolist = []
-
-psfpaths = ["/data/sguthrie/imivsdori/dori_sim/sim1/template/dori.psf", 
-            "/data/sguthrie/imivsdori/imi_sim/sim1/template/imi.psf"]
-rootpaths = ["/data/sguthrie/imivsdori/dori_sim/sim1/tps_getv2", 
-             "/data/sguthrie/imivsdori/imi_sim/sim1/tps_getv"]
+psfpaths = ["/data/sguthrie/imivsdori/dori_sim/explore_wat/2watumb/template/dori.psf",
+            "/data/sguthrie/imivsdori/imi_sim/explore_wat/2watumb2/template/imi.psf"]
+rootpaths = ["/data/sguthrie/imivsdori/dori_sim/explore_wat/2watumb",
+             "/data/sguthrie/imivsdori/imi_sim/explore_wat/2watumb2"]
 isdoris = [True, False]
 moltypes = ['SDR', 'SIM']
-picklefiles = ['TPSDori_interactions.pkl', 'TPSImi_interactions.pkl']
+picklefiles = ['WaterUmbDori_interactions.pkl', 'WaterUmbImi_interactions.pkl']
 for i in range(2):
-    tmp = [psfpaths[i], rootpaths[i], isdoris[i], moltypes[i],  picklefiles[i]]
+    tmp = [psfpaths[i], rootpaths[i], isdoris[i], moltypes[i], picklefiles[i]]
     infolist.append(tmp)
 
 #cumul_hbonds structure:
-#   overall: dictionary indexed by r1 value*100
+#   overall: dictionary indexed by (r1 value*100, r2 value*100)
 #       dictionary hashes to list.
-#       0: integer - number of simulations that saved at that r1 value
+#       0: integer - number of simulations that saved at that (r1,r2) value
 #       1: integer - number of simulations that had a proton on KCX
 #       2: integer - number of simulations that had a proton on OG
 #       3: dictionary - OAI interactions
@@ -461,8 +421,15 @@ for i in range(2):
 #       7: dictionary - OG interactions
 #       8: dictionary - Tail interactions  
 
+
+# keylists: OAI, OAD, KCX, WAT, OG, Tail
+
+logregex1 = '(?<=#)(-?[0-9]\.[0-9]+)'
+logregex2 = '(?<=#)(/[-[0-9\.\w]+)+'
+
+
 try:
-    inp = open('TPSInteractions.pkl', 'rb')
+    inp = open('WaterUmbInteractions.pkl', 'rb')
     bigstruct = pickle.load(inp)
     all_key_lists = pickle.load(inp)
     inp.close()
@@ -480,36 +447,47 @@ except IOError:
         except IOError:
             # keylists: OAI, OAD, KCX, WAT, OG, tail
             keylist = [[] for x in range(6)]
-            cumul_hbonds = {t:[0, 0, 0, {}, {}, {}, {}, {}, {}] for t in range(-700,700)}
-            for root, dirs, files in os.walk(rootpath):
-                if len(dirs) == 0:
-                    print root
-                    if "tpsv_trajs.dcd" in files:
-                        dcdpath = root + "/tpsv_trajs.dcd"
-                        traj = analyze_big_traj(dcdpath, psfpath, isdori, moltype)
-                        total, OAIhbonds, OADhbonds, KCXhbonds, WAThbonds, OGhbonds, tailhbonds = traj.analyze_hbonds()
+
+            cumul_hbonds = {key:[0, 0, 0, {}, {}, {}, {}, {}, {}] for key in range(-550, -150)}
+            logfile = open(rootpath + "/umbsamp.log", "r")
+            i = 0
+            for line in logfile:
+                m = re.search(logregex1, line)
+                if m != None:
+                    r1 = m.group(0)
+                    x = re.search(logregex2, line)
+                    dcdpath = x.group(0) + "/cap_production.dcd"
+                    try:
+                        #Check if dcd exists
+                        print dcdpath
+                        f = open(dcdpath, 'r')
+                        f.close()
+                        ensemble = analyze_umbsamp(dcdpath, psfpath, isdori, moltype, float(r1))
+                        total, OAIhbonds, OADhbonds, KCXhbonds, WAThbonds, OGhbonds, tailhbonds = ensemble.analyze_hbonds()
                         hbondlists = [OAIhbonds, OADhbonds, KCXhbonds, WAThbonds, OGhbonds, tailhbonds]
-                        for r1_val in total:
-                            if total[r1_val][0] != 0:
-                                cumul_hbonds[r1_val][0] += total[r1_val][0]
-                                cumul_hbonds[r1_val][1] += total[r1_val][1]
-                                cumul_hbonds[r1_val][2] += total[r1_val][2]
+                        for rvals in total:
+                            if total[rvals][0] != 0:
+                                cumul_hbonds[rvals][0] += total[rvals][0]
+                                cumul_hbonds[rvals][1] += total[rvals][1]
+                                cumul_hbonds[rvals][2] += total[rvals][2]
                                 for i in range(6):
-                                    for inter in hbondlists[i][r1_val]:
+                                    for inter in hbondlists[i][rvals]:
                                         if inter not in keylist[i]:
                                             keylist[i].append(inter)
-                                        block_incr_dict(hbondlists[i][r1_val][inter], cumul_hbonds[r1_val][i+3], inter)
+                                        block_incr_dict(hbondlists[i][rvals][inter], cumul_hbonds[rvals][i+3], inter)
                                     keylist[i].sort()
+                    except IOError:
+                        pass
             output = open(pfile, 'wb')
             pickle.dump(cumul_hbonds, output, -1)
             pickle.dump(keylist, output, -1)
             output.close()
-
+            
         all_key_lists.append(keylist)
-        data = Trajdata(moltype, cumul_hbonds, keylist, 25)
+        data = WaterUmbdata(moltype, cumul_hbonds, keylist)
         bigstruct.append(data)
 
-    output = open('TPSInteractions.pkl', 'wb') 
+    output = open('WaterUmbInteractions.pkl', 'wb') 
     pickle.dump(bigstruct, output, -1)
     pickle.dump(all_key_lists, output, -1)
     output.close()
@@ -521,12 +499,13 @@ for x in range(6):
     for y in range(2):
         foo |= set(all_key_lists[y][x])
     keysets.append(foo)
-    
+ 
 for x in range(6):
     for keyname in keysets[x]:
         plot_all(bigstruct, x, keyname, who[x] + " : " + keyname)
         print who[x] + " : " + keyname
 
-plot_prot_movement(bigstruct)
+
+
 
 

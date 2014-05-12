@@ -336,7 +336,8 @@ class Trajdata:
                 self.kcx_lower_err[i/size][i % size] = wmult*(probkcx + zsq/(2*total) - kcx_wscorepm)
                 self.og_upper_err[i/size][i % size] = wmult*(probog + zsq/(2*total) + og_wscorepm)
                 self.og_lower_err[i/size][i % size] = wmult*(probog + zsq/(2*total) - og_wscorepm)
-
+        #print self.r1points
+        #print self.r2points
         self.OAI = {}
         self.OAD = {}
         self.KCX = {}
@@ -354,7 +355,10 @@ class Trajdata:
         if keyname in self.interdicts[inter_i]:
             return self.interdicts[inter_i][keyname]
         elif keyname in ['SDR81', 'SMI81', 'SSD81', 'SIM81']:
-            return self.interdicts[inter_i][self.moltype + '81']
+            try:
+                return self.interdicts[inter_i][self.moltype + '81']
+            except KeyError:
+                return [None, None, None]
         else:
             return [None, None, None]
     def get_kcx_data(self):
@@ -598,8 +602,9 @@ rootpaths = ["/data/sguthrie/imivsdori/dori_sim/sim1/tps_getv2", "/data/sguthrie
 isdoris = [True, False, True, False]
 moltypes = ['SDR', 'SMI', 'SSD', 'SIM']
 picklefiles = ['TPSpmfDori_interactions.pkl', 'TPSpmfMimi_interactions.pkl', 'TPSpmfSDori_interactions.pkl', 'TPSpmfImi_interactions.pkl']
+size = [55, 55, 75, 75]
 for i in range(4):
-    tmp = [psfpaths[i], smrefpaths[i], rootpaths[i], isdoris[i], moltypes[i], picklefiles[i]]
+    tmp = [psfpaths[i], smrefpaths[i], rootpaths[i], isdoris[i], moltypes[i], picklefiles[i], size[i]]
     infolist.append(tmp)
 bigrefpath = "/data/sguthrie/imivsdori/OXASetup/RMSD/rmsdcompare.pdb"
 #cumul_hbonds structure:
@@ -631,7 +636,7 @@ except IOError:
     bigstruct = []
     all_key_lists = []
     for foo in range(4):
-        psfpath, smrefpath, rootpath, isdori, moltype, pfile = infolist[foo]
+        psfpath, smrefpath, rootpath, isdori, moltype, pfile, size = infolist[foo]
         print rootpath
         try:
             inp = open(pfile, 'rb')
@@ -642,7 +647,7 @@ except IOError:
             # keylists: OAI, OAD, KCX, WAT, OG, tail
             keylist = [[] for x in range(6)]
             matrix = []
-            for y in range(-60, -5):
+            for y in range(-80, -5):
                 for x in range(-60, 60):
                     matrix.append((x,y))
 
@@ -676,7 +681,7 @@ except IOError:
             output.close()
             
         all_key_lists.append(keylist)
-        data = Trajdata(moltype, cumul_hbonds, keylist, 25)
+        data = Trajdata(moltype, cumul_hbonds, keylist, size)
         bigstruct.append(data)
 
     output = open('TPSpmfInteractions.pkl', 'wb') 
