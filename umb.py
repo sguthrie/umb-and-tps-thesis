@@ -115,8 +115,8 @@ class UmbEnsemble:
                          "or (atom A 81 NAO) or (atom A 81 OAG) or (atom A 81 OAF) or (atom A 81 NAC) or (atom A 81 NAP)"
             #Not sure that these tail atoms can strictly be said to hydrogen bond
             #OG is already a donor and acceptor
-            new_donors = ['OAI', 'NAO', 'NAC', 'OH1', 'OH2', 'NAP'] 
-            new_acceptors = ['OAD', 'OAI', 'OAH', 'OAE', 'OH2', 'OH1']
+            new_donors = ['OAI', 'NAN', 'NAO', 'NAC', 'OH1', 'OH2', 'NAP'] 
+            new_acceptors = ['OAD', 'OAI', 'NAN', 'OAH', 'OAE', 'NAC', 'NAP', 'OH2', 'OH1']
             OAIacceptor = self.moltype + '81:OAI'
             OAIdonor = self.moltype + '81:HOI'
             OADacceptor = self.moltype + '81:OAD'
@@ -126,8 +126,8 @@ class UmbEnsemble:
             examinestr = "(atom A 81 O62) or (atom A 81 O7) or (atom A 84 OH1) or (atom A 84 OH1) " + \
                          "or (atom A 84 OH2) or (atom W 277 OH2) or (atom A 81 OG) " + \
                          "or (atom A 81 N24) or (atom A 81 N26)"
-            new_donors = ['O62', 'N24', 'N26', 'OH1', 'OH2']
-            new_acceptors = ['O7', 'O62', 'O31', 'O32', 'OH2', 'OH1']
+            new_donors = ['O62', 'N4', 'N24', 'N26', 'OH1', 'OH2']
+            new_acceptors = ['O7', 'O62', 'O31', 'O32', 'N4', 'N24', 'N26', 'OH2', 'OH1']
             OAIacceptor = self.moltype + '81:O62'
             OAIdonor = self.moltype + '81:HO6'
             OADacceptor = self.moltype + '81:O7'
@@ -352,7 +352,7 @@ class Umbdata:
     def get_plot_data(self, inter_i, keyname):
         if keyname in self.interdicts[inter_i]:
             return self.interdicts[inter_i][keyname]
-        elif keyname in ['SDR81', 'SMI81', 'SSD81', 'SIM81']:
+        elif (keyname in ['SDR81', 'SMI81', 'SSD81', 'SIM81']) and (self.moltype + '81' in self.interdicts[inter_i]):
             return self.interdicts[inter_i][self.moltype + '81']
         else:
             return [None, None, None]
@@ -360,6 +360,8 @@ class Umbdata:
         return self.kcx_attached, self.kcx_upper_err, self.kcx_lower_err
     def get_og_data(self):
         return self.og_attached, self.og_upper_err, self.og_lower_err
+    def get_total(self):
+        return self.nsims
 
 
 def get_dist(atom1, atom2):
@@ -490,6 +492,20 @@ def plot_2Dhist(bigstruct, inter_i, keyname, figname, ploterr=True):
         plt.savefig("Umb" + figname + "WithError.png")
     else:
         plt.savefig("Umb" + figname + ".png")
+    plt.close()
+
+def plot_total(bigstruct):
+    plt.figure(figsize=(14,8))
+    for i in range(4):
+        total = bigstruct[i].get_total()
+        plt.subplot(2,2,1+i)
+        plt.pcolor(bigstruct[i].r1points, bigstruct[i].r2points, total, vmin=0, vmax=150)
+        plt.xlabel('R1')
+        plt.ylabel('R2')
+        plt.title('Number of Simulations at Each Reaction Coordinate Set')
+        plt.colorbar()
+    plt.draw()
+    plt.savefig("NumSimsUmb.png")
     plt.close()
 
 def plot_prot_movement(bigstruct):
@@ -670,12 +686,15 @@ for x in range(6):
         foo |= set(all_key_lists[y][x])
     keysets.append(foo)
 
-plot_prot_movement(bigstruct)
- 
-for x in range(6):
-    for keyname in keysets[x]:
-        plot_2Dhist(bigstruct, x, keyname, who[x] + " : " + keyname, ploterr=False)
-        print who[x] + " : " + keyname
+plot_total(bigstruct)
+##plot_prot_movement(bigstruct)
+##plot_prot_movement_with_error(bigstruct)
+## 
+##for x in range(6):
+##    for keyname in keysets[x]:
+##        plot_2Dhist(bigstruct, x, keyname, who[x] + " : " + keyname)
+##        plot_2Dhist(bigstruct, x, keyname, who[x] + " : " + keyname, ploterr=False)
+##        print who[x] + " : " + keyname
 
 
 

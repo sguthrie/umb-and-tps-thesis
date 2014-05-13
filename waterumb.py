@@ -74,8 +74,8 @@ class WaterUmbEnsemble:
                          "or (atom A 81 NAO) or (atom A 81 OAG) or (atom A 81 OAF) or (atom A 81 NAC) or (atom A 81 NAP)"
             #Not sure that these tail atoms can strictly be said to hydrogen bond
             #OG is already a donor and acceptor
-            new_donors = ['OAI', 'NAO', 'NAC', 'OH1', 'OH2', 'NAP'] 
-            new_acceptors = ['OAD', 'OAI', 'OAH', 'OAE', 'OH2', 'OH1']
+            new_donors = ['OAI', 'NAN', 'NAO', 'NAC', 'OH1', 'OH2', 'NAP'] 
+            new_acceptors = ['OAD', 'OAI', 'NAN', 'OAH', 'OAE', 'NAC', 'NAP', 'OH2', 'OH1']
             OAIacceptor = self.moltype + '81:OAI'
             OAIdonor = self.moltype + '81:HOI'
             OADacceptor = self.moltype + '81:OAD'
@@ -85,8 +85,8 @@ class WaterUmbEnsemble:
             examinestr = "(atom A 81 O62) or (atom A 81 O7) or (atom A 84 OH1) or (atom A 84 OH1) " + \
                          "or (atom A 84 OH2) or (atom W 277 OH2) or (atom A 81 OG) " + \
                          "or (atom A 81 N24) or (atom A 81 N26)"
-            new_donors = ['O62', 'N24', 'N26', 'OH1', 'OH2']
-            new_acceptors = ['O7', 'O62', 'O31', 'O32', 'OH2', 'OH1']
+            new_donors = ['O62', 'N4', 'N24', 'N26', 'OH1', 'OH2']
+            new_acceptors = ['O7', 'O62', 'O31', 'O32', 'N4', 'N24', 'N26', 'OH2', 'OH1']
             OAIacceptor = self.moltype + '81:O62'
             OAIdonor = self.moltype + '81:HO6'
             OADacceptor = self.moltype + '81:O7'
@@ -106,7 +106,7 @@ class WaterUmbEnsemble:
         hana = hydbond.HydrogenBondAnalysis(self.universe, selection1=examinestr,
                                             selection2='all',
                                             donors=new_donors,
-                                            acceptors=new_acceptors) #, angle=150.0
+                                            acceptors=new_acceptors, angle=150.0)
         hana.run()
         h_bond_results = hana.timeseries
         r1lower = int((self.r1 - 2)*100)
@@ -282,7 +282,7 @@ class WaterUmbdata:
     def get_plot_data(self, inter_i, keyname):
         if keyname in self.interdicts[inter_i]:
             return self.interdicts[inter_i][keyname]
-        elif keyname in ['SDR81', 'SIM81']:
+        elif (keyname in ['SDR81', 'SIM81']) and (self.moltype + '81' in self.interdicts[inter_i]):
             return self.interdicts[inter_i][self.moltype + '81']
         else:
             return [None, None, None]
@@ -290,6 +290,8 @@ class WaterUmbdata:
         return self.kcx_attached, self.kcx_upper_err, self.kcx_lower_err
     def get_og_data(self):
         return self.og_attached, self.og_upper_err, self.og_lower_err
+    def get_total(self):
+        return self.nsims
 
 
 def get_dist(atom1, atom2):
@@ -349,14 +351,33 @@ def smooth_all(avg, uperr, lowerr):
                 superr[i] = sum(utmp)/float(len(utmp))
                 slowerr[i] = sum(ltmp)/float(len(ltmp))
     return smoothed, superr, slowerr
-    
-def plot_all(bigstruct, inter_i, keyname, figname):
+
+def plot_total(bigstruct):
+    plt.figure(figsize=(14,8))
+    colors = ['b', 'g']
+    for i in range(2):
+        plt.subplot(2, 1, i+1)
+        plt.grid()
+        total = bigstruct[i].get_total()
+        w = bigstruct[i].r1points[1] - bigstruct[i].r1points[0]
+        plt.bar(bigstruct[i].r1points, total, width=w, color=colors[i])
+        plt.xlabel('R1')
+        plt.ylabel('Number of Simulations')
+        plt.axis([-5.5, -1.5, 0, 35])
+    plt.subplot(2, 1, 1)
+    plt.title('Number of Simulations at Reaction Coordinate Point')
+    plt.draw()
+    plt.savefig("NumSimsRatchetUmb.png")
+    plt.close()
+
+def plot_all_scatter(bigstruct, inter_i, keyname, figname, smooth=True):
     plt.figure(figsize=(14,8))
     colors = ['b', 'g']
     for i in range(2):
         [avg, uperr, lowerr] = bigstruct[i].get_plot_data(inter_i, keyname)
         if avg != None:
-            avg, uperr, lowerr = smooth_all(avg, uperr, lowerr)
+            if smooth:
+                avg, uperr, lowerr = smooth_all(avg, uperr, lowerr)
             asymmerr = [lowerr, uperr]
             plt.errorbar(bigstruct[i].r1points, avg, yerr=asymmerr, fmt='-o', mfc=colors[i], label=bigstruct[i].moltype)
     plt.legend()
@@ -364,36 +385,37 @@ def plot_all(bigstruct, inter_i, keyname, figname):
     plt.ylabel('Probability of Interaction')
     plt.title(figname)
     plt.draw()
-    plt.savefig("SmoothedWaterUmb" + figname + ".png")
+    if smooth:
+        plt.savefig("SmoothedWaterUmb" + figname + ".png")
+    else:
+        plt.savefig("WaterUmb" + figname + ".png")
     plt.close()
 
 
-def plot_prot_movement(bigstruct):
+def plot_all(bigstruct, inter_i, keyname, figname, smooth=True):
     plt.figure(figsize=(14,8))
     colors = ['b', 'g']
     for i in range(2):
-        [avg, uperr, lowerr] = bigstruct[i].get_kcx_data()
-        asymmerr = [lowerr, uperr]
-        plt.errorbar(bigstruct[i].r1points, avg, yerr=asymmerr, fmt='-o', mfc=colors[i], label=bigstruct[i].moltype)
-    plt.legend()
-    plt.xlabel('R1')
-    plt.ylabel('Probability of Interaction')
-    plt.title("KCX protonation probability")
+        plt.subplot(2, 1, i+1)
+        plt.grid()
+        w = bigstruct[i].r1points[1] - bigstruct[i].r1points[0]
+        [avg, uperr, lowerr] = bigstruct[i].get_plot_data(inter_i, keyname)
+        if avg != None:
+            if smooth:
+                avg, uperr, lowerr = smooth_all(avg, uperr, lowerr)
+            asymmerr = [lowerr, uperr]
+            plt.bar(bigstruct[i].r1points, avg, width=w, color=colors[i])
+        plt.xlabel('R1')
+        plt.ylabel('Number of Simulations')
+        plt.axis([-5.5, -1.5, 0, 1])
+    plt.subplot(2, 1, 1)
+    plt.title(figname)
     plt.draw()
-    plt.savefig("WaterUmbKCXprot.png")
-
-    plt.figure(figsize=(14,8))
-    for i in range(2):
-        [avg, uperr, lowerr] = bigstruct[i].get_og_data()
-        asymmerr = [lowerr, uperr]
-        plt.errorbar(bigstruct[i].r1points, avg, yerr=asymmerr, fmt='-o', mfc=colors[i], label=bigstruct[i].moltype)
-    plt.legend()
-    plt.xlabel('R1')
-    plt.ylabel('Probability of Interaction')
-    plt.title("OG protonation probability")
-    plt.draw()
-    plt.savefig("WaterUmbOGprot.png")
-    plt.close('all')
+    if smooth:
+        plt.savefig("SmoothedWaterUmb" + figname + ".png")
+    else:
+        plt.savefig("WaterUmb" + figname + ".png")
+    plt.close()
     
 
 infolist = []
@@ -499,10 +521,13 @@ for x in range(6):
     for y in range(2):
         foo |= set(all_key_lists[y][x])
     keysets.append(foo)
- 
+
+plot_total(bigstruct)
+
 for x in range(6):
     for keyname in keysets[x]:
-        plot_all(bigstruct, x, keyname, who[x] + " : " + keyname)
+        plot_all(bigstruct, x, keyname, who[x] + " : " + keyname, smooth=True)
+        plot_all(bigstruct, x, keyname, who[x] + " : " + keyname, smooth=False)
         print who[x] + " : " + keyname
 
 
